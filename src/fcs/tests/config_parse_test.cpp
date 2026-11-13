@@ -11,6 +11,7 @@
 #include "runtime/l1_l2_setup.hpp"
 #include "scheduler/scheduler.hpp"
 #include "toml_helper.hpp"
+#include "toml_helper_eigen.hpp"
 
 namespace {
 
@@ -104,7 +105,7 @@ TEST(ConfigParse, InlineHelpersAndFormattersBehaveAsExpected) {
     const auto tracker_ptr = vision.l3->tracker_ptr();
     ASSERT_TRUE(tracker_ptr);
     EXPECT_DOUBLE_EQ(tracker_ptr->robot.matcher_gate, vision.tracker().robot.matcher_gate);
-    EXPECT_DOUBLE_EQ(tracker_ptr->outpost.model.yaw_log_k, 0.005);
+    EXPECT_DOUBLE_EQ(tracker_ptr->outpost.model.yaw_log_k, 0.0005);
     EXPECT_TRUE(vision.quanta_filter.enable_denoise_luma);
     EXPECT_EQ(vision.quanta_filter.denoise_luma.kernel_size, 5);
     EXPECT_DOUBLE_EQ(vision.quanta_filter.denoise_luma.sigma_x, 1.0);
@@ -113,7 +114,7 @@ TEST(ConfigParse, InlineHelpersAndFormattersBehaveAsExpected) {
     EXPECT_EQ(vision.quanta_filter.denoise_chroma.kernel_size, 3);
     EXPECT_DOUBLE_EQ(vision.quanta_filter.denoise_chroma.sigma_x, 1.0);
     EXPECT_DOUBLE_EQ(vision.quanta_filter.denoise_chroma.sigma_y, 1.0);
-    EXPECT_TRUE(vision.quanta_filter.enable_luma_quantization);
+    EXPECT_FALSE(vision.quanta_filter.enable_luma_quantization);
     EXPECT_EQ(vision.quanta_filter.luma_levels, 16);
     EXPECT_FALSE(vision.quanta.enVBR);
     EXPECT_EQ(vision.quanta.target_bitrate, 45000);
@@ -150,8 +151,7 @@ TEST(ConfigParse, MutableAccessorsAndTrajectoryHelpersUseWrappedConfigFields) {
     auto linear_solver       = fcs::core::trajectory::solver::create_solver(linear);
     ASSERT_NE(linear_solver, nullptr);
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler;
     fcs::core::trajectory::register_resource(scheduler, std::move(linear));
 }
 
@@ -162,20 +162,30 @@ TEST(ConfigParse, SetupL1CoversUsbMcuWrapperBranchesBeforeStubCameraFails) {
     auto hardware = *hardware_result;
 
     {
-        talos::World world;
-        talos::Scheduler scheduler(world);
-        auto result = fcs::runtime::setup_l1(world, scheduler, false, false, &hardware);
+        talos::Scheduler scheduler;
+        auto result = fcs::runtime::setup_l1(
+            scheduler.world(), scheduler,
+            fcs::hardware::HardwareBackendConfig{
+                fcs::hardware::DirectConfig{
+                    .camera_only = false,
+                    .transport   = fcs::hardware::Transport::Direct,
+                    .hardware    = hardware}});
         ASSERT_FALSE(result.has_value());
-        EXPECT_NE(result.error().find("failed connecting to mcu"), std::string::npos);
+        EXPECT_NE(result.error().find("connect usb mcu"), std::string::npos);
     }
 
     hardware.mcu->mcu_product_id = 0x1234;
     {
-        talos::World world;
-        talos::Scheduler scheduler(world);
-        auto result = fcs::runtime::setup_l1(world, scheduler, false, false, &hardware);
+        talos::Scheduler scheduler;
+        auto result = fcs::runtime::setup_l1(
+            scheduler.world(), scheduler,
+            fcs::hardware::HardwareBackendConfig{
+                fcs::hardware::DirectConfig{
+                    .camera_only = false,
+                    .transport   = fcs::hardware::Transport::Direct,
+                    .hardware    = hardware}});
         ASSERT_FALSE(result.has_value());
-        EXPECT_NE(result.error().find("failed connecting to mcu"), std::string::npos);
+        EXPECT_NE(result.error().find("connect usb mcu"), std::string::npos);
     }
 }
 

@@ -1,0 +1,11 @@
+CompileFlags:
+  # 构建目录生成 compile_commands.json 后自动使用真实编译参数
+  # （CMakeLists.txt 已开启 CMAKE_EXPORT_COMPILE_COMMANDS）
+  CompilationDatabase: build
+  Add:
+    # 项目为 C++23；无编译数据库时 clangd 默认按 C++14 解析，
+    # 会导致 std::expected / std::variant 等报"不存在"
+    - -std=c++23
+    # libusb 由 FetchContent 构建，头文件不在默认搜索路径
+    # （构建后该路径会被 compile_commands.json 中的真实 include 覆盖）
+    - -I/usr/include/libusb-1.0

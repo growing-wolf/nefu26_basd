@@ -153,12 +153,11 @@ int main() {
         .time_stamp = static_cast<uint32_t>(frame_count),
         .data =
             {
-                     .custom_byte_block_len = static_cast<uint16_t>(300),
+                     .custom_byte_block_len = static_cast<uint16_t>(kMaxCustomBlockBytes),
                      .custom_byte_block     = {},
                      },
         .eof = talos_gimbal::HeaderFrame::EoF(),
     };
-    std::memset(packet.data.custom_byte_block, 0, 300);
 
     if (auto result = client->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
         !result) {

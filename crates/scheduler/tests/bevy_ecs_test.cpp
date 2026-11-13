@@ -96,11 +96,9 @@ void test_meta_extraction() {
 void test_spsc_pipeline() {
     printf("=== Test: SPSC Pipeline ===\n");
 
-    World world;
-    world.insert_resource(Config{.threshold = 0.7f});
-    world.insert_resource(TrackerState{.count = 0});
-
-    Scheduler scheduler(world);
+    Scheduler scheduler;
+    scheduler.world().insert_resource(Config{.threshold = 0.7f});
+    scheduler.world().insert_resource(TrackerState{.count = 0});
     scheduler.add_system("camera", &camera_system);
     scheduler.add_system("detector", &detector_system);
     scheduler.add_system("tracker", &tracker_system);
@@ -128,8 +126,7 @@ void test_lambda_with_tags() {
     struct ProducerTag {};
     struct ConsumerTag {};
 
-    World world;
-    Scheduler scheduler(world);
+    Scheduler scheduler;
 
     scheduler.add_system("producer", [&scheduler](spmc_mut<int, ProducerTag> out) {
         static int produced = 0;
@@ -195,8 +192,7 @@ void test_execution_policies() {
     struct DataPipe {};
     struct ImuPipe {};
 
-    World world;
-    Scheduler scheduler(world);
+    Scheduler scheduler;
 
     scheduler.add_system<fixed_rate<30>>(
         "camera", [](spmc_mut<int, DataPipe> out) { out.write(42); });
@@ -230,8 +226,7 @@ void test_local_variables() {
     struct InputTag {};
     struct OutputTag {};
 
-    World world;
-    Scheduler scheduler(world);
+    Scheduler scheduler;
 
     // Producer system
     scheduler.add_system<pool_compute>("producer", [](spmc_mut<int, InputTag> out) {

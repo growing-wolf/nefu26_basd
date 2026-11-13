@@ -2,6 +2,7 @@
 
 #include "L1_sensor/parcel.hpp"
 #include "camera_config.hpp"
+#include "daheng_camera.hpp"
 #include "hik_camera.hpp"
 #include "shm_client.hpp"
 
@@ -23,7 +24,8 @@ struct Disconnected {
 struct ProducerNotAvailable {};
 
 using InputError = std::variant<
-    Timeout, Disconnected, ProducerNotAvailable, hikcamera::CameraError, ipc::ShmError>;
+    Timeout, Disconnected, ProducerNotAvailable, hikcamera::CameraError, dahengcamera::CameraError,
+    ipc::ShmError>;
 
 // ============================================================================
 // IpcInput - 共享内存输入
@@ -87,12 +89,47 @@ private:
 };
 
 // ============================================================================
+// DahengInput - 大恒相机输入
+// ============================================================================
+
+class DahengInput {
+public:
+    explicit DahengInput(
+        std::unique_ptr<dahengcamera::ImageCapturer> camera, CameraConfig info,
+        dahengcamera::ImageCapturer::CameraProfile profile,
+        std::chrono::duration<float, std::micro> exposure_time,
+        std::optional<std::string> device_name) noexcept;
+
+    DahengInput(const DahengInput&)            = delete;
+    DahengInput& operator=(const DahengInput&) = delete;
+
+    DahengInput(DahengInput&&) noexcept            = default;
+    DahengInput& operator=(DahengInput&&) noexcept = default;
+
+    [[nodiscard]] std::optional<Frame> try_recv() noexcept;
+    [[nodiscard]] std::expected<Frame, InputError> recv(std::chrono::milliseconds timeout) noexcept;
+    [[nodiscard]] const CameraConfig& camera_info() const noexcept;
+
+private:
+    [[nodiscard]] uint64_t now_ns() const noexcept;
+
+    std::unique_ptr<dahengcamera::ImageCapturer> camera_;
+    CameraConfig info_;
+    dahengcamera::ImageCapturer::CameraProfile profile_;
+    uint64_t exposure_time_ns_;
+    uint64_t seq_{0};
+    std::optional<std::string> device_name_;
+    static constexpr uint64_t kReconnectRetryLimit = 25565;
+    uint64_t retry_{kReconnectRetryLimit};
+};
+
+// ============================================================================
 // CameraInterface - 相机接口
 // ============================================================================
 
 class CameraInterface {
 public:
-    using InputMode = std::variant<IpcInput, HikInput>;
+    using InputMode = std::variant<IpcInput, HikInput, DahengInput>;
 
     CameraInterface() = delete;
     explicit CameraInterface(InputMode mode) noexcept;
@@ -110,6 +147,8 @@ public:
         create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept;
     [[nodiscard]] static std::expected<CameraInterface, InputError>
         create_hik(const CameraConfig& config) noexcept;
+    [[nodiscard]] static std::expected<CameraInterface, InputError>
+        create_daheng(const CameraConfig& config) noexcept;
 
 private:
     InputMode mode_;

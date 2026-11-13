@@ -57,7 +57,8 @@ auto load_hardware_config(std::string_view robot) -> std::expected<HardwareConfi
 
     auto hardware_config = toml_helper::from_table<HardwareConfig>(hardware_tbl.table());
     if (!hardware_config) {
-        return std::unexpected(fmt::format("hardware config: {}", hardware_config.error()));
+        // The caller prefixes with "hardware config: ".
+        return std::unexpected(hardware_config.error());
     }
     return std::move(*hardware_config);
 }

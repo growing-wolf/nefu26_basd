@@ -9,10 +9,11 @@ height = 1080
 # num_samples = 30
 
 [camera.profile]
+driver = "daheng"  # camera SDK backend: "hik" | "daheng"
 trigger_mode = false
 invert_image = false
-exposure_time_us = 5000  # 3ms in microseconds
-gain = 16.7
+exposure_time_us = 5000  # 5ms in microseconds
+gain = 7.0  # MER2-135-208U3C-L gain range: [0, 16] dB
 
 [extrinsic.gimbal_yaw.gimbal_pitch]
 translation = [-0.00563, 0, 0.08139]

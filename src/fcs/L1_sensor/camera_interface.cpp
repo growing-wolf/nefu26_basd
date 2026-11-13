@@ -5,10 +5,25 @@
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
 
+#include <cstdlib>
 #include <thread>
 #include <utility>
 
 namespace fcs::L1 {
+
+namespace {
+
+auto to_daheng_rotate(RotateType type) noexcept -> dahengcamera::RotateType {
+    switch (type) {
+    case RotateType::None: return dahengcamera::RotateType::None;
+    case RotateType::Clockwise90: return dahengcamera::RotateType::Clockwise90;
+    case RotateType::Clockwise180: return dahengcamera::RotateType::Clockwise180;
+    case RotateType::Clockwise270: return dahengcamera::RotateType::Clockwise270;
+    }
+    std::abort();
+}
+
+} // namespace
 
 // ============================================================================
 // IpcInput 实现
@@ -125,6 +140,76 @@ auto HikInput::now_ns() const noexcept -> uint64_t {
 }
 
 // ============================================================================
+// DahengInput 实现
+// ============================================================================
+
+DahengInput::DahengInput(
+    std::unique_ptr<dahengcamera::ImageCapturer> camera, CameraConfig info,
+    dahengcamera::ImageCapturer::CameraProfile profile,
+    std::chrono::duration<float, std::micro> exposure_time,
+    std::optional<std::string> device_name) noexcept
+    : camera_(std::move(camera))
+    , info_(std::move(info))
+    , profile_(profile)
+    , exposure_time_ns_(
+          static_cast<uint64_t>(
+              std::chrono::duration_cast<std::chrono::nanoseconds>(exposure_time).count()))
+    , device_name_(std::move(device_name)) {}
+
+auto DahengInput::try_recv() noexcept -> std::optional<Frame> {
+    using namespace std::chrono_literals;
+    // NOTE: Using host timestamp (now_ns) instead of camera timestamp.
+    // Camera-host clock sync is complex and error only visible in high-dynamic scenarios.
+    auto now_   = now_ns();
+    auto result = camera_->read(1ms);
+    if (!result) {
+        return std::nullopt;
+    }
+    return Frame{
+        .seq          = seq_++,
+        .timestamp_ns = now_,
+        .image        = std::move(*result),
+    };
+}
+
+auto DahengInput::recv(const std::chrono::milliseconds timeout) noexcept
+    -> std::expected<Frame, InputError> {
+    // NOTE: Using host timestamp (now_ns) instead of camera timestamp.
+    // Camera-host clock sync is complex and error only visible in high-dynamic scenarios.
+    auto result = camera_->read(
+        std::chrono::duration_cast<std::chrono::duration<unsigned int, std::milli>>(timeout));
+    if (!result) {
+        if (!camera_->valid()) {
+            if (retry_ > 0) {
+                --retry_;
+                const char* name = device_name_ ? device_name_->c_str() : nullptr;
+                auto cam         = dahengcamera::ImageCapturer::create(profile_, name);
+                if (!cam) {
+                    return std::unexpected(cam.error());
+                }
+                camera_ = std::move(cam.value());
+            }
+            return std::unexpected(Disconnected{result.error().what()});
+        }
+        return std::unexpected(result.error());
+    }
+    retry_ = kReconnectRetryLimit;
+    return Frame{
+        .seq          = seq_++,
+        .timestamp_ns = now_ns(),
+        .image        = std::move(*result),
+    };
+}
+
+auto DahengInput::camera_info() const noexcept -> const CameraConfig& { return info_; }
+
+auto DahengInput::now_ns() const noexcept -> uint64_t {
+    const auto now = clock::now_ns();
+    // Subtract half of exposure time to get exposure midpoint
+    return now - (exposure_time_ns_ / 2);
+}
+
+// ============================================================================
 // CameraInterface 实现
 // ============================================================================
 
@@ -180,6 +265,25 @@ auto CameraInterface::create_hik(const CameraConfig& config) noexcept
         return std::unexpected(result.error());
     }
     return CameraInterface(HikInput(
+        std::move(*result), config, profile, profile.exposure_time, config.profile.device_name));
+}
+
+auto CameraInterface::create_daheng(const CameraConfig& config) noexcept
+    -> std::expected<CameraInterface, InputError> {
+    dahengcamera::ImageCapturer::CameraProfile profile;
+    profile.trigger_mode = config.profile.trigger_mode;
+    profile.invert_image = config.profile.invert_image;
+    profile.exposure_time =
+        std::chrono::duration<float, std::micro>(config.profile.exposure_time_us);
+    profile.gain        = static_cast<float>(config.profile.gain);
+    profile.rotate_type = to_daheng_rotate(config.profile.rotate_angle);
+
+    const char* name = config.profile.device_name ? config.profile.device_name->c_str() : nullptr;
+    auto result      = dahengcamera::ImageCapturer::create(profile, name);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    return CameraInterface(DahengInput(
         std::move(*result), config, profile, profile.exposure_time, config.profile.device_name));
 }
 

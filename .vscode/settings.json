@@ -2,10 +2,11 @@
     "clangd.arguments": [
         "--header-insertion=never"
     ],
-    "clangd.path": "clangd",
+    "clangd.path": "/usr/lib/llvm-21/bin/clangd",
     "cmake.environment": {
         "CC": "clang-21",
         "CXX": "clang++-21",
     },
-    "editor.formatOnSave": true
+    "editor.formatOnSave": true,
+    "python-envs.defaultEnvManager": "ms-python.python:system"
 }

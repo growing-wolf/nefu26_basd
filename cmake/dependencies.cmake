@@ -279,6 +279,15 @@ else ()
     message(STATUS "HIK SDK not found at: ${HIK_SDK_ROOT}")
 endif ()
 
+# Daheng Camera SDK configuration
+set(DAHENG_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3dparty/daheng_sdk")
+
+if (EXISTS "${DAHENG_SDK_ROOT}")
+    message(STATUS "Daheng SDK found at: ${DAHENG_SDK_ROOT}")
+else ()
+    message(STATUS "Daheng SDK not found at: ${DAHENG_SDK_ROOT}")
+endif ()
+
 # Axera AX650 SDK configuration
 # SDK should be deployed to /soc/ with env vars set (see docs/ax650.md)
 # CMAKE_PREFIX_PATH, CMAKE_INCLUDE_PATH, CMAKE_LIBRARY_PATH will be searched automatically

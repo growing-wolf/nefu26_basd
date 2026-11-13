@@ -54,12 +54,12 @@ Resource ──read──▶ System ──write──▶ Resource
 | ------------------------- | :--------------: | ------------------------------------ | -- |
 | **PC**                    |      x86_64      | LLVM clang-21 + libstdc++13          | ✅  |
 | **NVIDIA Jetson Orin NX** |      aarch64     | LLVM clang-21 + libstdc++13          | ✅  |
-| **Axera AX650N**          |      aarch64     | LLVM clang-21 + libstdc++13          | ✅  |
+| **Axera AX650N**          |      aarch64     | LLVM clang-21SA + libstdc++13          | ✅  |
 | **Mac**                   | aarch64 / x86_64 | Apple Clang + libc++                 | ✅  |
 | **Android / Termux**      |      aarch64     | LLVM clang-21 + libc++ / bionic libc | 🧪 |
 
 > ✅：已验证
-> 🧪：实验性支持
+> 🧪：实验性支持   
 
 ## 依赖
 

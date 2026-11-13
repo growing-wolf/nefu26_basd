@@ -15,7 +15,14 @@ namespace fcs {
 
 using hikcamera::RotateType;
 
+/// 相机驱动后端，决定 L1 采集层使用哪个 SDK
+enum class CameraDriver {
+    Hik,
+    Daheng,
+};
+
 struct CameraProfileConfig {
+    CameraDriver driver{CameraDriver::Hik};
     bool trigger_mode{false};
     bool invert_image{false};
     uint32_t exposure_time_us{3000}; // 3ms in microseconds
@@ -44,6 +51,13 @@ template <>
 struct formatter<fcs::RotateType> : formatter<std::string_view> {
     auto format(fcs::RotateType type, format_context& ctx) const {
         return formatter<std::string_view>::format(magic_enum::enum_name(type), ctx);
+    }
+};
+
+template <>
+struct formatter<fcs::CameraDriver> : formatter<std::string_view> {
+    auto format(fcs::CameraDriver driver, format_context& ctx) const {
+        return formatter<std::string_view>::format(magic_enum::enum_name(driver), ctx);
     }
 };
 

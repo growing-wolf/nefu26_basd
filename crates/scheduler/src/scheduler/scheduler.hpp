@@ -89,8 +89,8 @@ using namespace system;
  * ## Usage
  *
  * ```cpp
- * World world;
- * Scheduler scheduler(world);
+ * Scheduler scheduler;
+ * auto& world = scheduler.world();
  *
  * scheduler.add_system<fixed_rate<30>>("camera", [](talos::spmc_mut<fcs::ImageFrame,
  * fcs::ImageChannelTopic> cam_out) {

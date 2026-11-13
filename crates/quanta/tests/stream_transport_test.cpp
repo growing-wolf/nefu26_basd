@@ -101,10 +101,15 @@ TEST(QuantaPacketQueue, SendsFrameQueuesPacketByPacket) {
     EXPECT_EQ(stats.queued_frames, 0U);
 }
 
-TEST(QuantaPacketQueue, BuffersLatestFiveFrameQueues) {
+TEST(QuantaPacketQueue, BuffersLatestThirtyFrameQueues) {
+    // NOTE: the Quanta squashed commit raised kFrameBufferDepth from 5 to 30;
+    // the producer side now keeps the newest 30 frames (one packet each here)
+    // and drops the oldest ones from the producer history.
     quanta::QuantaPacketQueue queue;
+    constexpr size_t kFrameBufferDepth = quanta::QuantaPacketQueue::kFrameBufferDepth;
+    constexpr size_t kFrameCount       = kFrameBufferDepth + 5;
 
-    for (uint16_t seq = 1; seq <= 6; ++seq) {
+    for (uint16_t seq = 1; seq <= kFrameCount; ++seq) {
         auto frame = quanta::build_quanta_packets(make_encoded_packet(12, false), seq);
         ASSERT_TRUE(frame.has_value());
         EXPECT_TRUE(queue.push_frame(std::move(*frame)));
@@ -113,22 +118,32 @@ TEST(QuantaPacketQueue, BuffersLatestFiveFrameQueues) {
     auto packets = queue.take_all();
     ASSERT_EQ(packets.size(), quanta::QuantaPacketQueue::kFrameBufferDepth);
     for (size_t i = 0; i < packets.size(); ++i) {
-        EXPECT_EQ(packets[i].seq, static_cast<uint16_t>(i + 2));
+        EXPECT_EQ(
+            packets[i].seq, static_cast<uint16_t>(i + kFrameCount - kFrameBufferDepth + 1));
     }
 
     const auto stats = queue.stats();
-    EXPECT_EQ(stats.frames_enqueued, 6U);
+    EXPECT_EQ(stats.frames_enqueued, static_cast<uint64_t>(kFrameCount));
+    EXPECT_EQ(stats.frames_dropped, static_cast<uint64_t>(kFrameCount - kFrameBufferDepth));
+    EXPECT_EQ(stats.frame_buffer_drops, static_cast<uint64_t>(kFrameCount - kFrameBufferDepth));
     EXPECT_EQ(stats.packets_dequeued, quanta::QuantaPacketQueue::kFrameBufferDepth);
 }
 
-TEST(QuantaPacketQueue, DropsFramesLargerThanSixPackets) {
+TEST(QuantaPacketQueue, RejectsFramesLargerThanMaxPackets) {
+    // NOTE: the Quanta squashed commit replaced the fixed six-packet limit
+    // with kDefaultMaxPackets = 15, so a 7-packet frame is now accepted and a
+    // frame exceeding the max packet count is rejected at push time.
     quanta::QuantaPacketQueue queue;
     auto previous  = quanta::build_quanta_packets(make_encoded_packet(12, false), 8);
     auto oversized = quanta::build_quanta_packets(
-        make_encoded_packet(static_cast<size_t>(quanta::QuantaPacket::MAX_PAYLOAD) * 7, false), 9);
+        make_encoded_packet(
+            static_cast<size_t>(quanta::QuantaPacket::MAX_PAYLOAD)
+                * (quanta::QuantaPacketQueue::kDefaultMaxPackets + 1),
+            false),
+        9);
     ASSERT_TRUE(previous.has_value());
     ASSERT_TRUE(oversized.has_value());
-    ASSERT_EQ(oversized->packets.size(), 7U);
+    ASSERT_EQ(oversized->packets.size(), quanta::QuantaPacketQueue::kDefaultMaxPackets + 1);
 
     EXPECT_TRUE(queue.push_frame(std::move(*previous)));
     EXPECT_FALSE(queue.push_frame(std::move(*oversized)));
@@ -138,5 +153,7 @@ TEST(QuantaPacketQueue, DropsFramesLargerThanSixPackets) {
     EXPECT_EQ(packets.front().seq, 8);
 
     const auto stats = queue.stats();
+    EXPECT_EQ(stats.frames_enqueued, 1U);
+    EXPECT_EQ(stats.frames_dropped, 1U);
     EXPECT_EQ(stats.oversized_frame_drops, 1U);
 }

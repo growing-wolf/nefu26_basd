@@ -111,6 +111,30 @@ auto image_filenames(const fs::path& dir) -> std::vector<std::string> {
 
 auto source_root() -> fs::path { return fs::path(TALOS_SOURCE_DIR); }
 
+auto make_snapshot_cwd() -> fs::path {
+    // The capturer snapshots at_vision.toml + config/ relative to the process
+    // cwd at registration time (the TALOS_SOURCE_DIR fallback in
+    // resolve_existing_path is only compiled into test targets, not the fcs
+    // library). Prepare a minimal working directory with the deployed layout
+    // so capturer-registering tests run from the build dir unchanged.
+    const auto working_dir = make_temp_dir("snapshot-cwd");
+    fs::copy_file(
+        source_root() / "at_vision.toml", working_dir / "at_vision.toml",
+        fs::copy_options::overwrite_existing);
+    fs::create_directories(working_dir / "config" / "vision");
+    fs::create_directories(working_dir / "config" / "robot");
+    fs::copy_file(
+        source_root() / "config/vision_base.toml", working_dir / "config/vision_base.toml",
+        fs::copy_options::overwrite_existing);
+    fs::copy_file(
+        source_root() / "config/vision/std.toml", working_dir / "config/vision/std.toml",
+        fs::copy_options::overwrite_existing);
+    fs::copy_file(
+        source_root() / "config/robot/hero.toml", working_dir / "config/robot/hero.toml",
+        fs::copy_options::overwrite_existing);
+    return working_dir;
+}
+
 class ScopedCurrentPath {
 public:
     explicit ScopedCurrentPath(const fs::path& path)
@@ -288,84 +312,92 @@ void seed_runtime_resources(talos::World& world) {
 }
 
 TEST(Capturer, LowDiskStillWritesSnapshotRows) {
-    const fs::path output_dir = make_temp_dir("low-disk");
+    const fs::path working_dir = make_snapshot_cwd();
+    const fs::path output_dir  = make_temp_dir("low-disk");
+    {
+        const ScopedCurrentPath cwd(working_dir);
 
-    talos::Scheduler scheduler;
-    seed_runtime_resources(scheduler.world());
+        talos::Scheduler scheduler;
+        seed_runtime_resources(scheduler.world());
 
-    register_test_producer(scheduler, ProducerMode::Continuous);
+        register_test_producer(scheduler, ProducerMode::Continuous);
 
-    fcs::CapturerConfig config;
-    config.enabled             = true;
-    config.output_dir          = output_dir.string();
-    config.reserved_free_bytes = std::numeric_limits<uint64_t>::max();
+        fcs::CapturerConfig config;
+        config.enabled             = true;
+        config.output_dir          = output_dir.string();
+        config.reserved_free_bytes = std::numeric_limits<uint64_t>::max();
 
-    fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
+        fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
 
-    run_scheduler_for(scheduler, 2200ms);
+        run_scheduler_for(scheduler, 2200ms);
 
-    const fs::path run_dir = find_run_dir(output_dir);
-    ASSERT_FALSE(run_dir.empty());
+        const fs::path run_dir = find_run_dir(output_dir);
+        ASSERT_FALSE(run_dir.empty());
 
-    const auto rows = read_jsonl(run_dir / "snapshots.jsonl");
-    ASSERT_GE(rows.size(), 2u);
+        const auto rows = read_jsonl(run_dir / "snapshots.jsonl");
+        ASSERT_GE(rows.size(), 2u);
 
-    for (const auto& row : rows) {
-        EXPECT_EQ(row.at("capture_status"), "low_disk");
-        ASSERT_TRUE(row.at("streams").contains("selected_target"));
+        for (const auto& row : rows) {
+            EXPECT_EQ(row.at("capture_status"), "low_disk");
+            ASSERT_TRUE(row.at("streams").contains("selected_target"));
+        }
     }
-
     fs::remove_all(output_dir);
+    fs::remove_all(working_dir);
 }
 
 TEST(Capturer, RunMetadataStoresConfigSnapshotCopies) {
-    const fs::path output_dir = make_temp_dir("config-snapshot");
+    const fs::path working_dir = make_snapshot_cwd();
+    const fs::path output_dir  = make_temp_dir("config-snapshot");
+    {
+        const ScopedCurrentPath cwd(working_dir);
 
-    talos::Scheduler scheduler;
-    seed_runtime_resources(scheduler.world());
+        talos::Scheduler scheduler;
+        seed_runtime_resources(scheduler.world());
 
-    fcs::CapturerConfig config;
-    config.enabled             = true;
-    config.output_dir          = output_dir.string();
-    config.reserved_free_bytes = 0;
+        fcs::CapturerConfig config;
+        config.enabled             = true;
+        config.output_dir          = output_dir.string();
+        config.reserved_free_bytes = 0;
 
-    fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
+        fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
 
-    const fs::path run_dir = find_run_dir(output_dir);
-    ASSERT_FALSE(run_dir.empty());
+        const fs::path run_dir = find_run_dir(output_dir);
+        ASSERT_FALSE(run_dir.empty());
 
-    const auto run_json = read_json_file(run_dir / "run.json");
-    ASSERT_TRUE(run_json.contains("config_snapshot"));
+        const auto run_json = read_json_file(run_dir / "run.json");
+        ASSERT_TRUE(run_json.contains("config_snapshot"));
 
-    const auto& config_snapshot = run_json.at("config_snapshot");
-    EXPECT_EQ(config_snapshot.at("entry_source_path").get<std::string>(), "at_vision.toml");
-    EXPECT_EQ(config_snapshot.at("entry_snapshot_path").get<std::string>(), "at_vision.toml");
-    EXPECT_EQ(config_snapshot.at("config_source_dir").get<std::string>(), "config");
-    EXPECT_EQ(config_snapshot.at("config_snapshot_dir").get<std::string>(), "config");
-    EXPECT_GT(config_snapshot.at("copied_files").get<size_t>(), 0u);
+        const auto& config_snapshot = run_json.at("config_snapshot");
+        EXPECT_EQ(config_snapshot.at("entry_source_path").get<std::string>(), "at_vision.toml");
+        EXPECT_EQ(config_snapshot.at("entry_snapshot_path").get<std::string>(), "at_vision.toml");
+        EXPECT_EQ(config_snapshot.at("config_source_dir").get<std::string>(), "config");
+        EXPECT_EQ(config_snapshot.at("config_snapshot_dir").get<std::string>(), "config");
+        EXPECT_GT(config_snapshot.at("copied_files").get<size_t>(), 0u);
 
-    const fs::path entry_snapshot =
-        run_dir / config_snapshot.at("entry_snapshot_path").get<std::string>();
-    ASSERT_TRUE(fs::exists(entry_snapshot));
-    EXPECT_EQ(read_text_file(entry_snapshot), read_text_file(source_root() / "at_vision.toml"));
+        const fs::path entry_snapshot =
+            run_dir / config_snapshot.at("entry_snapshot_path").get<std::string>();
+        ASSERT_TRUE(fs::exists(entry_snapshot));
+        EXPECT_EQ(read_text_file(entry_snapshot), read_text_file(source_root() / "at_vision.toml"));
 
-    const std::array<fs::path, 3> expected_files{
-        fs::path("config") / "vision_base.toml",
-        fs::path("config") / "vision" / "std.toml",
-        fs::path("config") / "robot" / "hero.toml",
-    };
+        const std::array<fs::path, 3> expected_files{
+            fs::path("config") / "vision_base.toml",
+            fs::path("config") / "vision" / "std.toml",
+            fs::path("config") / "robot" / "hero.toml",
+        };
 
-    for (const auto& relative_path : expected_files) {
-        const fs::path snapshot_path = run_dir / relative_path;
-        ASSERT_TRUE(fs::exists(snapshot_path));
-        EXPECT_EQ(read_text_file(snapshot_path), read_text_file(source_root() / relative_path));
+        for (const auto& relative_path : expected_files) {
+            const fs::path snapshot_path = run_dir / relative_path;
+            ASSERT_TRUE(fs::exists(snapshot_path));
+            EXPECT_EQ(read_text_file(snapshot_path), read_text_file(source_root() / relative_path));
+        }
+
+        ASSERT_TRUE(run_json.contains("camera_capture_policy"));
+        EXPECT_EQ(run_json.at("camera_capture_policy").at("idle_hz"), 4);
+        EXPECT_EQ(run_json.at("camera_capture_policy").at("active_hz"), 20);
     }
-
-    ASSERT_TRUE(run_json.contains("camera_capture_policy"));
-    EXPECT_EQ(run_json.at("camera_capture_policy").at("idle_hz"), 4);
-    EXPECT_EQ(run_json.at("camera_capture_policy").at("active_hz"), 20);
-
     fs::remove_all(output_dir);
+    fs::remove_all(working_dir);
 }
 
 TEST(Capturer, RejectsOutputDirectoryInsideConfigSnapshotSource) {
@@ -394,311 +426,348 @@ TEST(Capturer, RejectsOutputDirectoryInsideConfigSnapshotSource) {
 }
 
 TEST(Capturer, IdleModeWritesCameraAtLowRate) {
-    const fs::path output_dir = make_temp_dir("idle-rate");
+    const fs::path working_dir = make_snapshot_cwd();
+    const fs::path output_dir  = make_temp_dir("idle-rate");
+    {
+        const ScopedCurrentPath cwd(working_dir);
 
-    talos::Scheduler scheduler;
-    seed_runtime_resources(scheduler.world());
+        talos::Scheduler scheduler;
+        seed_runtime_resources(scheduler.world());
 
-    register_test_producer(scheduler, ProducerMode::Continuous);
+        register_test_producer(scheduler, ProducerMode::Continuous);
 
-    fcs::CapturerConfig config;
-    config.enabled             = true;
-    config.output_dir          = output_dir.string();
-    config.reserved_free_bytes = 0;
+        fcs::CapturerConfig config;
+        config.enabled             = true;
+        config.output_dir          = output_dir.string();
+        config.reserved_free_bytes = 0;
 
-    fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
+        fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
 
-    run_scheduler_for(scheduler, 1400ms);
+        run_scheduler_for(scheduler, 1400ms);
 
-    const fs::path run_dir = find_run_dir(output_dir);
-    ASSERT_FALSE(run_dir.empty());
+        const fs::path run_dir = find_run_dir(output_dir);
+        ASSERT_FALSE(run_dir.empty());
 
-    const size_t idle_jpegs = count_jpegs(run_dir / "images", "camera_");
-    EXPECT_GE(idle_jpegs, 3u);
-    EXPECT_LE(idle_jpegs, 6u);
-
+        const size_t idle_jpegs = count_jpegs(run_dir / "images", "camera_");
+        EXPECT_GE(idle_jpegs, 3u);
+        EXPECT_LE(idle_jpegs, 6u);
+    }
     fs::remove_all(output_dir);
+    fs::remove_all(working_dir);
 }
 
 TEST(Capturer, FollowingModeRaisesCameraWriteRate) {
-    const fs::path output_dir = make_temp_dir("following-rate");
+    const fs::path working_dir = make_snapshot_cwd();
+    const fs::path output_dir  = make_temp_dir("following-rate");
+    {
+        const ScopedCurrentPath cwd(working_dir);
 
-    talos::Scheduler scheduler;
-    seed_runtime_resources(scheduler.world());
+        talos::Scheduler scheduler;
+        seed_runtime_resources(scheduler.world());
 
-    register_test_producer(scheduler, ProducerMode::FollowingActive);
+        register_test_producer(scheduler, ProducerMode::FollowingActive);
 
-    fcs::CapturerConfig config;
-    config.enabled             = true;
-    config.output_dir          = output_dir.string();
-    config.reserved_free_bytes = 0;
+        fcs::CapturerConfig config;
+        config.enabled             = true;
+        config.output_dir          = output_dir.string();
+        config.reserved_free_bytes = 0;
 
-    fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
+        fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
 
-    run_scheduler_for(scheduler, 1400ms);
+        run_scheduler_for(scheduler, 1400ms);
 
-    const fs::path run_dir = find_run_dir(output_dir);
-    ASSERT_FALSE(run_dir.empty());
+        const fs::path run_dir = find_run_dir(output_dir);
+        ASSERT_FALSE(run_dir.empty());
 
-    const size_t follow_jpegs = count_jpegs(run_dir / "images", "camera_");
-    EXPECT_GE(follow_jpegs, 8u);
-    EXPECT_LE(follow_jpegs, 24u);
-
+        const size_t follow_jpegs = count_jpegs(run_dir / "images", "camera_");
+        EXPECT_GE(follow_jpegs, 8u);
+        EXPECT_LE(follow_jpegs, 24u);
+    }
     fs::remove_all(output_dir);
+    fs::remove_all(working_dir);
 }
 
 TEST(Capturer, FireModeRaisesCameraWriteRate) {
-    const fs::path output_dir = make_temp_dir("fire-rate");
+    const fs::path working_dir = make_snapshot_cwd();
+    const fs::path output_dir  = make_temp_dir("fire-rate");
+    {
+        const ScopedCurrentPath cwd(working_dir);
 
-    talos::Scheduler scheduler;
-    seed_runtime_resources(scheduler.world());
+        talos::Scheduler scheduler;
+        seed_runtime_resources(scheduler.world());
 
-    register_test_producer(scheduler, ProducerMode::FireActive);
+        register_test_producer(scheduler, ProducerMode::FireActive);
 
-    fcs::CapturerConfig config;
-    config.enabled             = true;
-    config.output_dir          = output_dir.string();
-    config.reserved_free_bytes = 0;
+        fcs::CapturerConfig config;
+        config.enabled             = true;
+        config.output_dir          = output_dir.string();
+        config.reserved_free_bytes = 0;
 
-    fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
+        fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
 
-    run_scheduler_for(scheduler, 1400ms);
+        run_scheduler_for(scheduler, 1400ms);
 
-    const fs::path run_dir = find_run_dir(output_dir);
-    ASSERT_FALSE(run_dir.empty());
+        const fs::path run_dir = find_run_dir(output_dir);
+        ASSERT_FALSE(run_dir.empty());
 
-    const size_t fire_jpegs = count_jpegs(run_dir / "images", "camera_");
-    EXPECT_GE(fire_jpegs, 8u);
-    EXPECT_LE(fire_jpegs, 24u);
-
+        const size_t fire_jpegs = count_jpegs(run_dir / "images", "camera_");
+        EXPECT_GE(fire_jpegs, 8u);
+        EXPECT_LE(fire_jpegs, 24u);
+    }
     fs::remove_all(output_dir);
+    fs::remove_all(working_dir);
 }
 
 TEST(Capturer, StoresOnlyOriginalCameraImages) {
-    const fs::path output_dir = make_temp_dir("camera-only-images");
+    const fs::path working_dir = make_snapshot_cwd();
+    const fs::path output_dir  = make_temp_dir("camera-only-images");
+    {
+        const ScopedCurrentPath cwd(working_dir);
 
-    talos::Scheduler scheduler;
-    seed_runtime_resources(scheduler.world());
+        talos::Scheduler scheduler;
+        seed_runtime_resources(scheduler.world());
 
-    register_test_producer(scheduler, ProducerMode::Continuous);
+        register_test_producer(scheduler, ProducerMode::Continuous);
 
-    fcs::CapturerConfig config;
-    config.enabled             = true;
-    config.output_dir          = output_dir.string();
-    config.reserved_free_bytes = 0;
+        fcs::CapturerConfig config;
+        config.enabled             = true;
+        config.output_dir          = output_dir.string();
+        config.reserved_free_bytes = 0;
 
-    fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
+        fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
 
-    run_scheduler_for(scheduler, 2200ms);
+        run_scheduler_for(scheduler, 2200ms);
 
-    const fs::path run_dir = find_run_dir(output_dir);
-    ASSERT_FALSE(run_dir.empty());
+        const fs::path run_dir = find_run_dir(output_dir);
+        ASSERT_FALSE(run_dir.empty());
 
-    for (const auto& filename : image_filenames(run_dir / "images")) {
-        EXPECT_EQ(filename.rfind("camera_", 0), 0U);
+        for (const auto& filename : image_filenames(run_dir / "images")) {
+            EXPECT_EQ(filename.rfind("camera_", 0), 0U);
+        }
     }
-
     fs::remove_all(output_dir);
+    fs::remove_all(working_dir);
 }
 
 TEST(Capturer, StaleDetectorMetadataIsPreserved) {
-    const fs::path output_dir = make_temp_dir("stale-detector");
+    const fs::path working_dir = make_snapshot_cwd();
+    const fs::path output_dir  = make_temp_dir("stale-detector");
+    {
+        const ScopedCurrentPath cwd(working_dir);
 
-    talos::Scheduler scheduler;
-    seed_runtime_resources(scheduler.world());
+        talos::Scheduler scheduler;
+        seed_runtime_resources(scheduler.world());
 
-    register_test_producer(scheduler, ProducerMode::StaleDetector);
+        register_test_producer(scheduler, ProducerMode::StaleDetector);
 
-    fcs::CapturerConfig config;
-    config.enabled             = true;
-    config.output_dir          = output_dir.string();
-    config.reserved_free_bytes = 0;
+        fcs::CapturerConfig config;
+        config.enabled             = true;
+        config.output_dir          = output_dir.string();
+        config.reserved_free_bytes = 0;
 
-    fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
+        fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
 
-    run_scheduler_for(scheduler, 3500ms);
+        run_scheduler_for(scheduler, 3500ms);
 
-    const fs::path run_dir = find_run_dir(output_dir);
-    ASSERT_FALSE(run_dir.empty());
+        const fs::path run_dir = find_run_dir(output_dir);
+        ASSERT_FALSE(run_dir.empty());
 
-    const auto rows = read_jsonl(run_dir / "snapshots.jsonl");
-    ASSERT_FALSE(rows.empty());
+        const auto rows = read_jsonl(run_dir / "snapshots.jsonl");
+        ASSERT_FALSE(rows.empty());
 
-    bool found_stale_row = false;
-    for (const auto& row : rows) {
-        const auto& camera   = row.at("streams").at("camera");
-        const auto& detector = row.at("streams").at("detector");
+        bool found_stale_row = false;
+        for (const auto& row : rows) {
+            const auto& camera   = row.at("streams").at("camera");
+            const auto& detector = row.at("streams").at("detector");
 
-        if (!camera.value("present", false) || !detector.value("present", false)) {
-            continue;
+            if (!camera.value("present", false) || !detector.value("present", false)) {
+                continue;
+            }
+            if (camera.at("frame_id") != 2 || detector.at("frame_id") != 1) {
+                continue;
+            }
+            if (!detector.at("stale").get<bool>()) {
+                continue;
+            }
+            found_stale_row = true;
+            EXPECT_FALSE(detector.at("updated_this_tick").get<bool>());
+            EXPECT_TRUE(detector.at("stale").get<bool>());
+            if (camera.at("image_path").is_string() && detector.at("image_path").is_string()) {
+                EXPECT_NE(
+                    camera.at("image_path").get<std::string>(),
+                    detector.at("image_path").get<std::string>());
+            }
+            break;
         }
-        if (camera.at("frame_id") != 2 || detector.at("frame_id") != 1) {
-            continue;
-        }
-        if (!detector.at("stale").get<bool>()) {
-            continue;
-        }
-        found_stale_row = true;
-        EXPECT_FALSE(detector.at("updated_this_tick").get<bool>());
-        EXPECT_TRUE(detector.at("stale").get<bool>());
-        if (camera.at("image_path").is_string() && detector.at("image_path").is_string()) {
-            EXPECT_NE(
-                camera.at("image_path").get<std::string>(),
-                detector.at("image_path").get<std::string>());
-        }
-        break;
+
+        EXPECT_TRUE(found_stale_row);
     }
-
-    EXPECT_TRUE(found_stale_row);
     fs::remove_all(output_dir);
+    fs::remove_all(working_dir);
 }
 
 TEST(Capturer, SnapshotReferencesRecordedControlWindow) {
-    const fs::path output_dir = make_temp_dir("control-window");
+    const fs::path working_dir = make_snapshot_cwd();
+    const fs::path output_dir  = make_temp_dir("control-window");
+    {
+        const ScopedCurrentPath cwd(working_dir);
 
-    talos::Scheduler scheduler;
-    seed_runtime_resources(scheduler.world());
+        talos::Scheduler scheduler;
+        seed_runtime_resources(scheduler.world());
 
-    register_test_producer(scheduler, ProducerMode::Continuous);
+        register_test_producer(scheduler, ProducerMode::Continuous);
 
-    fcs::CapturerConfig config;
-    config.enabled             = true;
-    config.output_dir          = output_dir.string();
-    config.reserved_free_bytes = 0;
+        fcs::CapturerConfig config;
+        config.enabled             = true;
+        config.output_dir          = output_dir.string();
+        config.reserved_free_bytes = 0;
 
-    fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
+        fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
 
-    run_scheduler_for(scheduler, 2200ms);
+        run_scheduler_for(scheduler, 2200ms);
 
-    const fs::path run_dir = find_run_dir(output_dir);
-    ASSERT_FALSE(run_dir.empty());
+        const fs::path run_dir = find_run_dir(output_dir);
+        ASSERT_FALSE(run_dir.empty());
 
-    const auto rows = read_jsonl(run_dir / "snapshots.jsonl");
-    ASSERT_FALSE(rows.empty());
-    const auto run_json = read_json_file(run_dir / "run.json");
+        const auto rows = read_jsonl(run_dir / "snapshots.jsonl");
+        ASSERT_FALSE(rows.empty());
+        const auto run_json = read_json_file(run_dir / "run.json");
 
-    bool found_written_window = false;
-    for (const auto& row : rows) {
-        const auto& control_window = row.at("control_window");
-        if (!control_window.at("written").get<bool>()) {
-            continue;
+        bool found_written_window = false;
+        for (const auto& row : rows) {
+            const auto& control_window = row.at("control_window");
+            if (!control_window.at("written").get<bool>()) {
+                continue;
+            }
+
+            found_written_window = true;
+            EXPECT_EQ(control_window.at("frequency_hz"), 250);
+            EXPECT_GT(control_window.at("sample_count").get<size_t>(), 0u);
+            ASSERT_TRUE(control_window.at("path").is_string());
+            ASSERT_TRUE(control_window.at("chunk_header_size").is_number_unsigned());
+            ASSERT_TRUE(control_window.at("sample_size").is_number_unsigned());
+
+            const fs::path control_path = run_dir / control_window.at("path").get<std::string>();
+            ASSERT_TRUE(fs::exists(control_path));
+            EXPECT_GT(fs::file_size(control_path), 0u);
+            EXPECT_EQ(control_window.at("encoding"), "little_endian_explicit");
+            EXPECT_EQ(run_json.at("control").at("encoding"), "little_endian_explicit");
+            EXPECT_EQ(
+                fs::file_size(control_path),
+                control_window.at("chunk_header_size").get<uint64_t>()
+                    + (control_window.at("sample_count").get<uint64_t>()
+                       * control_window.at("sample_size").get<uint64_t>()));
+            break;
         }
 
-        found_written_window = true;
-        EXPECT_EQ(control_window.at("frequency_hz"), 250);
-        EXPECT_GT(control_window.at("sample_count").get<size_t>(), 0u);
-        ASSERT_TRUE(control_window.at("path").is_string());
-        ASSERT_TRUE(control_window.at("chunk_header_size").is_number_unsigned());
-        ASSERT_TRUE(control_window.at("sample_size").is_number_unsigned());
-
-        const fs::path control_path = run_dir / control_window.at("path").get<std::string>();
-        ASSERT_TRUE(fs::exists(control_path));
-        EXPECT_GT(fs::file_size(control_path), 0u);
-        EXPECT_EQ(control_window.at("encoding"), "little_endian_explicit");
-        EXPECT_EQ(run_json.at("control").at("encoding"), "little_endian_explicit");
-        EXPECT_EQ(
-            fs::file_size(control_path),
-            control_window.at("chunk_header_size").get<uint64_t>()
-                + (control_window.at("sample_count").get<uint64_t>()
-                   * control_window.at("sample_size").get<uint64_t>()));
-        break;
+        EXPECT_TRUE(found_written_window);
     }
-
-    EXPECT_TRUE(found_written_window);
     fs::remove_all(output_dir);
+    fs::remove_all(working_dir);
 }
 
 TEST(Capturer, ControlResourcesGoStaleWhenPublisherIdles) {
-    const fs::path output_dir = make_temp_dir("control-stale");
+    const fs::path working_dir = make_snapshot_cwd();
+    const fs::path output_dir  = make_temp_dir("control-stale");
+    {
+        const ScopedCurrentPath cwd(working_dir);
 
-    talos::Scheduler scheduler;
-    seed_runtime_resources(scheduler.world());
+        talos::Scheduler scheduler;
+        seed_runtime_resources(scheduler.world());
 
-    register_test_producer(scheduler, ProducerMode::ControlBurstThenIdle);
+        register_test_producer(scheduler, ProducerMode::ControlBurstThenIdle);
 
-    fcs::CapturerConfig config;
-    config.enabled             = true;
-    config.output_dir          = output_dir.string();
-    config.reserved_free_bytes = 0;
+        fcs::CapturerConfig config;
+        config.enabled             = true;
+        config.output_dir          = output_dir.string();
+        config.reserved_free_bytes = 0;
 
-    fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
+        fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
 
-    run_scheduler_for(scheduler, 3500ms);
+        run_scheduler_for(scheduler, 3500ms);
 
-    const fs::path run_dir = find_run_dir(output_dir);
-    ASSERT_FALSE(run_dir.empty());
+        const fs::path run_dir = find_run_dir(output_dir);
+        ASSERT_FALSE(run_dir.empty());
 
-    const auto rows = read_jsonl(run_dir / "snapshots.jsonl");
-    ASSERT_FALSE(rows.empty());
+        const auto rows = read_jsonl(run_dir / "snapshots.jsonl");
+        ASSERT_FALSE(rows.empty());
 
-    std::optional<uint64_t> last_fresh_sample_timestamp_ns;
-    bool found_stale_row = false;
-    for (const auto& row : rows) {
-        const auto& resources = row.at("resources");
-        if (!resources.value("present", false)) {
-            continue;
+        std::optional<uint64_t> last_fresh_sample_timestamp_ns;
+        bool found_stale_row = false;
+        for (const auto& row : rows) {
+            const auto& resources = row.at("resources");
+            if (!resources.value("present", false)) {
+                continue;
+            }
+
+            const uint64_t sample_timestamp_ns =
+                resources.at("sample_timestamp_ns").get<uint64_t>();
+            if (resources.at("updated_this_tick").get<bool>()) {
+                last_fresh_sample_timestamp_ns = sample_timestamp_ns;
+                continue;
+            }
+            if (!resources.at("stale").get<bool>() || !last_fresh_sample_timestamp_ns.has_value()) {
+                continue;
+            }
+
+            found_stale_row = true;
+            EXPECT_EQ(sample_timestamp_ns, *last_fresh_sample_timestamp_ns);
+            EXPECT_LT(sample_timestamp_ns, row.at("tick_timestamp_ns").get<uint64_t>());
+            break;
         }
 
-        const uint64_t sample_timestamp_ns = resources.at("sample_timestamp_ns").get<uint64_t>();
-        if (resources.at("updated_this_tick").get<bool>()) {
-            last_fresh_sample_timestamp_ns = sample_timestamp_ns;
-            continue;
-        }
-        if (!resources.at("stale").get<bool>() || !last_fresh_sample_timestamp_ns.has_value()) {
-            continue;
-        }
-
-        found_stale_row = true;
-        EXPECT_EQ(sample_timestamp_ns, *last_fresh_sample_timestamp_ns);
-        EXPECT_LT(sample_timestamp_ns, row.at("tick_timestamp_ns").get<uint64_t>());
-        break;
+        EXPECT_TRUE(found_stale_row);
     }
-
-    EXPECT_TRUE(found_stale_row);
     fs::remove_all(output_dir);
+    fs::remove_all(working_dir);
 }
 
 TEST(Capturer, ControlResourcesExposeImuPresenceBitWhenPresent) {
-    const fs::path output_dir = make_temp_dir("control-imu-present");
+    const fs::path working_dir = make_snapshot_cwd();
+    const fs::path output_dir  = make_temp_dir("control-imu-present");
+    {
+        const ScopedCurrentPath cwd(working_dir);
 
-    talos::Scheduler scheduler;
-    seed_runtime_resources(scheduler.world());
+        talos::Scheduler scheduler;
+        seed_runtime_resources(scheduler.world());
 
-    register_test_producer(scheduler, ProducerMode::Continuous);
+        register_test_producer(scheduler, ProducerMode::Continuous);
 
-    fcs::CapturerConfig config;
-    config.enabled             = true;
-    config.output_dir          = output_dir.string();
-    config.reserved_free_bytes = 0;
+        fcs::CapturerConfig config;
+        config.enabled             = true;
+        config.output_dir          = output_dir.string();
+        config.reserved_free_bytes = 0;
 
-    fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
+        fcs::runtime::register_runtime_capturer_system(scheduler, config, launch_context());
 
-    run_scheduler_for(scheduler, 2200ms);
+        run_scheduler_for(scheduler, 2200ms);
 
-    const fs::path run_dir = find_run_dir(output_dir);
-    ASSERT_FALSE(run_dir.empty());
+        const fs::path run_dir = find_run_dir(output_dir);
+        ASSERT_FALSE(run_dir.empty());
 
-    const auto rows = read_jsonl(run_dir / "snapshots.jsonl");
-    ASSERT_FALSE(rows.empty());
+        const auto rows = read_jsonl(run_dir / "snapshots.jsonl");
+        ASSERT_FALSE(rows.empty());
 
-    bool found_resources_row = false;
-    for (const auto& row : rows) {
-        const auto& resources = row.at("resources");
-        if (!resources.value("present", false)) {
-            continue;
+        bool found_resources_row = false;
+        for (const auto& row : rows) {
+            const auto& resources = row.at("resources");
+            if (!resources.value("present", false)) {
+                continue;
+            }
+
+            found_resources_row = true;
+            ASSERT_TRUE(resources.contains("imu_state"));
+            const auto& imu_state = resources.at("imu_state");
+            ASSERT_TRUE(imu_state.contains("present"));
+            EXPECT_TRUE(imu_state.at("present").get<bool>());
+            EXPECT_TRUE(imu_state.at("timestamp_ns").is_number_unsigned());
+            break;
         }
 
-        found_resources_row = true;
-        ASSERT_TRUE(resources.contains("imu_state"));
-        const auto& imu_state = resources.at("imu_state");
-        ASSERT_TRUE(imu_state.contains("present"));
-        EXPECT_TRUE(imu_state.at("present").get<bool>());
-        EXPECT_TRUE(imu_state.at("timestamp_ns").is_number_unsigned());
-        break;
+        EXPECT_TRUE(found_resources_row);
     }
-
-    EXPECT_TRUE(found_resources_row);
     fs::remove_all(output_dir);
+    fs::remove_all(working_dir);
 }
 
 TEST(Capturer, ChannelGenerationSamplingTracksUpdatedAndStale) {

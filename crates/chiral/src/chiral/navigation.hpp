@@ -2,6 +2,7 @@
 
 #include "chiral/chiral_endpoint.hpp"
 #include <array>
+#include <chrono>
 #include <concepts>
 #include <cstdint>
 

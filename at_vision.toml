@@ -18,6 +18,7 @@ vision = "daedalus_vision"
 "ax650-doggy" = { robot = "doggy", vision = "doggy" }
 "tegra-ubuntu" = { robot = "infantry_nx", vision = "nx" }
 "byq" = { backend = "Daedalus", robot = "infantry_4", vision = "daedalus_vision" }
+"TUF" = { backend = "CameraOnly", robot = "infantry_4", vision = "daedalus_vision" }
 [foxglove]
 enabled = true
 transport = "WebSocket"

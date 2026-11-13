@@ -175,6 +175,7 @@ add_subdirectory(crates/chiral)
 # Hardware drivers
 add_subdirectory(crates/hardware/at_gimbal)
 add_subdirectory(crates/hardware/hik_camera_driver)
+add_subdirectory(crates/hardware/daheng_camera_driver)
 add_subdirectory(crates/hardware_daedalus)
 
 # ============================================================================
@@ -369,6 +370,7 @@ target_link_libraries(fcs PUBLIC
         Ceres::ceres
         talos_gimbal
         hikcamera
+        dahengcamera
         ipc
         chiral
         ${OpenCV_LIBS}
@@ -581,6 +583,7 @@ set(TALOS_INSTALL_TARGETS
         quanta
         scheduler
         hikcamera
+        dahengcamera
         fcs
         fcs_visualization
         ${PROJECT_NAME}
@@ -627,6 +630,26 @@ if(TALOS_HIK_RUNTIME_LIB_DIR AND EXISTS "${TALOS_HIK_RUNTIME_LIB_DIR}")
     foreach(_lib IN LISTS TALOS_HIK_RUNTIME_LIBS)
         talos_install_shared_library("${_lib}")
     endforeach()
+endif()
+
+set(TALOS_DAHENG_RUNTIME_LIB_DIR "")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(TALOS_DAHENG_RUNTIME_LIB_DIR "${DAHENG_SDK_ROOT}/lib")
+endif()
+
+if(TALOS_DAHENG_RUNTIME_LIB_DIR AND EXISTS "${TALOS_DAHENG_RUNTIME_LIB_DIR}")
+    file(GLOB TALOS_DAHENG_RUNTIME_LIBS
+        "${TALOS_DAHENG_RUNTIME_LIB_DIR}/*.so"
+        "${TALOS_DAHENG_RUNTIME_LIB_DIR}/*.so.*"
+    )
+    foreach(_lib IN LISTS TALOS_DAHENG_RUNTIME_LIBS)
+        talos_install_shared_library("${_lib}")
+    endforeach()
+    # GxIAPI loads its transport layers from the directory next to libgxiapi.so
+    file(GLOB TALOS_DAHENG_RUNTIME_CTI "${TALOS_DAHENG_RUNTIME_LIB_DIR}/*.cti")
+    if(TALOS_DAHENG_RUNTIME_CTI)
+        install(FILES ${TALOS_DAHENG_RUNTIME_CTI} DESTINATION "${TALOS_INSTALL_BIN_DIR}")
+    endif()
 endif()
 
 if(TALOS_FFMPEG_ROOT AND EXISTS "${TALOS_FFMPEG_ROOT}/lib")

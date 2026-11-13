@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <primitive/overloaded.hpp>
@@ -473,11 +474,23 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
                         imu_ready = true;
                     }
                 }
-                SPDLOG_INFO("initializing hikrobot camera...");
-                auto input_result = fcs::L1::CameraInterface::create_hik(cfg.hardware.camera);
+                const auto camera_driver = cfg.hardware.camera->profile.driver;
+                SPDLOG_INFO("initializing camera (driver={})...", camera_driver);
+                auto input_result =
+                    [&]()
+                    -> std::expected<fcs::L1::CameraInterface, fcs::L1::InputError> {
+                    switch (camera_driver) {
+                    case fcs::CameraDriver::Hik:
+                        return fcs::L1::CameraInterface::create_hik(cfg.hardware.camera);
+                    case fcs::CameraDriver::Daheng:
+                        return fcs::L1::CameraInterface::create_daheng(cfg.hardware.camera);
+                    }
+                    std::abort();
+                }();
                 if (!input_result) {
                     return std::unexpected(
-                        fmt::format("init hikrobot camera: {}", input_result.error()));
+                        fmt::format(
+                            "init {} camera: {}", camera_driver, input_result.error()));
                 }
                 camera =
                     std::make_unique<fcs::L1::CameraInterface>(std::move(input_result.value()));
